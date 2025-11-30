@@ -152,8 +152,16 @@ jobs:
         include:
           - arch: x86_64
             host: x86_64-w64-mingw32
+            openssl_target: mingw64
+            use_llvm: false
           - arch: i686
             host: i686-w64-mingw32
+            openssl_target: mingw
+            use_llvm: false
+          - arch: arm64
+            host: aarch64-w64-mingw32
+            openssl_target: mingw-arm64
+            use_llvm: true
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -171,8 +179,14 @@ jobs:
             pkg-config \
             gettext \
             mingw-w64 \
-            g++-mingw-w64 \
-            wine64
+            g++-mingw-w64
+
+      - name: Install llvm-mingw (for ARM64)
+        if: matrix.use_llvm
+        run: |
+          curl -L https://github.com/mstorsjo/llvm-mingw/releases/download/20241119/llvm-mingw-20241119-ucrt-ubuntu-20.04-x86_64.tar.xz -o llvm-mingw.tar.xz
+          tar xf llvm-mingw.tar.xz
+          echo "$PWD/llvm-mingw-20241119-ucrt-ubuntu-20.04-x86_64/bin" >> $GITHUB_PATH
 
       - name: Set up build environment
         run: |
@@ -188,7 +202,11 @@ jobs:
           curl -L https://zlib.net/zlib-1.3.1.tar.gz -o zlib.tar.gz
           tar xzf zlib.tar.gz
           cd zlib-*
-          CC=$HOST-gcc AR=$HOST-ar RANLIB=$HOST-ranlib ./configure --prefix=$PREFIX --static
+          if [ "${{ matrix.use_llvm }}" = "true" ]; then
+            CC=$HOST-clang AR=$HOST-ar RANLIB=$HOST-ranlib ./configure --prefix=$PREFIX --static
+          else
+            CC=$HOST-gcc AR=$HOST-ar RANLIB=$HOST-ranlib ./configure --prefix=$PREFIX --static
+          fi
           make -j$(nproc)
           make install
 
@@ -228,12 +246,12 @@ jobs:
           curl -L https://github.com/openssl/openssl/releases/download/openssl-3.3.2/openssl-3.3.2.tar.gz -o openssl.tar.gz
           tar xzf openssl.tar.gz
           cd openssl-*
-          if [ "${{ matrix.arch }}" = "x86_64" ]; then
-            TARGET="mingw64"
+          if [ "${{ matrix.use_llvm }}" = "true" ]; then
+            # For ARM64 with llvm-mingw, use clang
+            CC=$HOST-clang CXX=$HOST-clang++ ./Configure mingw-arm64 --prefix=$PREFIX --libdir=lib no-shared
           else
-            TARGET="mingw"
+            ./Configure ${{ matrix.openssl_target }} --cross-compile-prefix=$HOST- --prefix=$PREFIX --libdir=lib no-shared
           fi
-          ./Configure $TARGET --cross-compile-prefix=$HOST- --prefix=$PREFIX --libdir=lib no-shared
           make -j$(nproc)
           make install_sw
 
@@ -430,6 +448,7 @@ jobs:
             | macOS | arm64 (Apple Silicon) | `aria2c-macos-arm64.tar.gz` |
             | macOS | x86_64 (Intel) | `aria2c-macos-x86_64.tar.gz` |
             | Windows | x86_64 | `aria2c-windows-x86_64.zip` |
+            | Windows | arm64 | `aria2c-windows-arm64.zip` |
             | Windows | i686 | `aria2c-windows-i686.zip` |
             
             ### Checksums
