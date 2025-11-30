@@ -36,6 +36,8 @@ Pre-built binaries are available in the [Releases](../../releases) section.
 
 - **Linux x86_64**: `aria2c-linux-x86_64.tar.gz`
 - **Linux arm64**: `aria2c-linux-arm64.tar.gz`
+- **macOS arm64 (Apple Silicon)**: `aria2c-macos-arm64.tar.gz`
+- **macOS x86_64 (Intel)**: `aria2c-macos-x86_64.tar.gz`
 - **Windows x86_64**: `aria2c-windows-x86_64.zip`
 - **Windows i686 (32-bit)**: `aria2c-windows-i686.zip`
 
