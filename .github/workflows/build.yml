@@ -1,0 +1,354 @@
+name: Build Patched aria2
+
+on:
+  schedule:
+    # Check daily at 00:00 UTC
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      force_build:
+        description: 'Force build even if version matches'
+        required: false
+        default: 'false'
+        type: boolean
+
+permissions:
+  contents: write
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+      aria2_version: ${{ steps.check.outputs.aria2_version }}
+      aria2_tag: ${{ steps.check.outputs.aria2_tag }}
+    steps:
+      - name: Check latest aria2 release
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Get latest aria2 release
+          LATEST=$(curl -s https://api.github.com/repos/aria2/aria2/releases/latest)
+          ARIA2_TAG=$(echo "$LATEST" | jq -r '.tag_name')
+          ARIA2_VERSION=$(echo "$ARIA2_TAG" | sed 's/release-//')
+          
+          echo "Latest aria2 version: $ARIA2_VERSION (tag: $ARIA2_TAG)"
+          echo "aria2_version=$ARIA2_VERSION" >> $GITHUB_OUTPUT
+          echo "aria2_tag=$ARIA2_TAG" >> $GITHUB_OUTPUT
+          
+          # Check our latest release
+          OUR_LATEST=$(curl -s -H "Authorization: token $GH_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/latest" 2>/dev/null || echo '{}')
+          OUR_TAG=$(echo "$OUR_LATEST" | jq -r '.tag_name // empty')
+          
+          echo "Our latest release: $OUR_TAG"
+          
+          # Determine if we should build
+          if [ "${{ inputs.force_build }}" = "true" ]; then
+            echo "Force build requested"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          elif [ -z "$OUR_TAG" ] || [ "$OUR_TAG" = "null" ]; then
+            echo "No previous release found, will build"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          elif [ "$OUR_TAG" != "v$ARIA2_VERSION-patched" ]; then
+            echo "Version mismatch, will build"
+            echo "should_build=true" >> $GITHUB_OUTPUT
+          else
+            echo "Already at latest version, skipping build"
+            echo "should_build=false" >> $GITHUB_OUTPUT
+          fi
+
+  build-linux:
+    needs: check-version
+    if: needs.check-version.outputs.should_build == 'true'
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            autoconf \
+            automake \
+            autotools-dev \
+            autopoint \
+            libtool \
+            pkg-config \
+            libssl-dev \
+            libssh2-1-dev \
+            libc-ares-dev \
+            libxml2-dev \
+            zlib1g-dev \
+            libsqlite3-dev \
+            libgcrypt20-dev \
+            libgpg-error-dev \
+            libgmp-dev \
+            libexpat1-dev \
+            gettext
+
+      - name: Download aria2 source
+        run: |
+          ARIA2_TAG="${{ needs.check-version.outputs.aria2_tag }}"
+          echo "Downloading aria2 $ARIA2_TAG"
+          curl -L "https://github.com/aria2/aria2/archive/refs/tags/${ARIA2_TAG}.tar.gz" -o aria2.tar.gz
+          tar xzf aria2.tar.gz
+          mv aria2-* aria2-src
+
+      - name: Apply patch
+        run: |
+          cd aria2-src
+          patch -p1 < ../patch.diff
+
+      - name: Build aria2
+        run: |
+          cd aria2-src
+          autoreconf -i
+          ./configure \
+            --prefix=/usr \
+            --with-libssl \
+            --with-libssh2 \
+            --with-libcares \
+            --with-libxml2 \
+            --with-libz \
+            --with-libsqlite3 \
+            --with-libgcrypt \
+            --with-libexpat \
+            ARIA2_STATIC=yes
+          make -j$(nproc)
+          strip src/aria2c
+
+      - name: Package
+        run: |
+          mkdir -p release
+          cp aria2-src/src/aria2c release/aria2c-linux-${{ matrix.arch }}
+          cd release
+          tar czf aria2c-linux-${{ matrix.arch }}.tar.gz aria2c-linux-${{ matrix.arch }}
+          sha256sum aria2c-linux-${{ matrix.arch }}.tar.gz > aria2c-linux-${{ matrix.arch }}.tar.gz.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-${{ matrix.arch }}-build
+          path: release/*
+
+  build-windows:
+    needs: check-version
+    if: needs.check-version.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            host: x86_64-w64-mingw32
+          - arch: i686
+            host: i686-w64-mingw32
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            autoconf \
+            automake \
+            autotools-dev \
+            autopoint \
+            libtool \
+            pkg-config \
+            gettext \
+            mingw-w64 \
+            g++-mingw-w64 \
+            wine64
+
+      - name: Set up build environment
+        run: |
+          mkdir -p $HOME/aria2-build
+          echo "BUILD_DIR=$HOME/aria2-build" >> $GITHUB_ENV
+          echo "HOST=${{ matrix.host }}" >> $GITHUB_ENV
+          echo "PREFIX=$HOME/aria2-build/${{ matrix.host }}" >> $GITHUB_ENV
+
+      - name: Build zlib
+        run: |
+          mkdir -p $PREFIX
+          cd $BUILD_DIR
+          curl -L https://zlib.net/zlib-1.3.1.tar.gz -o zlib.tar.gz
+          tar xzf zlib.tar.gz
+          cd zlib-*
+          CC=$HOST-gcc AR=$HOST-ar RANLIB=$HOST-ranlib ./configure --prefix=$PREFIX --static
+          make -j$(nproc)
+          make install
+
+      - name: Build expat
+        run: |
+          cd $BUILD_DIR
+          curl -L https://github.com/libexpat/libexpat/releases/download/R_2_6_2/expat-2.6.2.tar.gz -o expat.tar.gz
+          tar xzf expat.tar.gz
+          cd expat-*
+          ./configure --host=$HOST --prefix=$PREFIX --enable-static --disable-shared --without-docbook
+          make -j$(nproc)
+          make install
+
+      - name: Build c-ares
+        run: |
+          cd $BUILD_DIR
+          curl -L https://github.com/c-ares/c-ares/releases/download/v1.34.4/c-ares-1.34.4.tar.gz -o c-ares.tar.gz
+          tar xzf c-ares.tar.gz
+          cd c-ares-*
+          ./configure --host=$HOST --prefix=$PREFIX --enable-static --disable-shared
+          make -j$(nproc)
+          make install
+
+      - name: Build sqlite3
+        run: |
+          cd $BUILD_DIR
+          curl -L https://www.sqlite.org/2024/sqlite-autoconf-3460100.tar.gz -o sqlite.tar.gz
+          tar xzf sqlite.tar.gz
+          cd sqlite-*
+          ./configure --host=$HOST --prefix=$PREFIX --enable-static --disable-shared
+          make -j$(nproc)
+          make install
+
+      - name: Build OpenSSL
+        run: |
+          cd $BUILD_DIR
+          curl -L https://github.com/openssl/openssl/releases/download/openssl-3.3.2/openssl-3.3.2.tar.gz -o openssl.tar.gz
+          tar xzf openssl.tar.gz
+          cd openssl-*
+          if [ "${{ matrix.arch }}" = "x86_64" ]; then
+            TARGET="mingw64"
+          else
+            TARGET="mingw"
+          fi
+          ./Configure $TARGET --cross-compile-prefix=$HOST- --prefix=$PREFIX no-shared
+          make -j$(nproc)
+          make install_sw
+
+      - name: Build libssh2
+        run: |
+          cd $BUILD_DIR
+          curl -L https://libssh2.org/download/libssh2-1.11.1.tar.gz -o libssh2.tar.gz
+          tar xzf libssh2.tar.gz
+          cd libssh2-*
+          ./configure --host=$HOST --prefix=$PREFIX --enable-static --disable-shared \
+            --with-crypto=openssl --with-libssl-prefix=$PREFIX \
+            CPPFLAGS="-I$PREFIX/include" LDFLAGS="-L$PREFIX/lib"
+          make -j$(nproc)
+          make install
+
+      - name: Download aria2 source
+        run: |
+          ARIA2_TAG="${{ needs.check-version.outputs.aria2_tag }}"
+          echo "Downloading aria2 $ARIA2_TAG"
+          curl -L "https://github.com/aria2/aria2/archive/refs/tags/${ARIA2_TAG}.tar.gz" -o aria2.tar.gz
+          tar xzf aria2.tar.gz
+          mv aria2-* aria2-src
+
+      - name: Apply patch
+        run: |
+          cd aria2-src
+          patch -p1 < ../patch.diff
+
+      - name: Build aria2
+        run: |
+          cd aria2-src
+          autoreconf -i
+          ./configure \
+            --host=$HOST \
+            --prefix=$PREFIX \
+            --without-libxml2 \
+            --with-libexpat \
+            --without-libgcrypt \
+            --with-openssl \
+            --with-libcares \
+            --with-libz \
+            --with-libssh2 \
+            --with-sqlite3 \
+            --without-gnutls \
+            --without-wintls \
+            --disable-nls \
+            ARIA2_STATIC=yes \
+            CPPFLAGS="-I$PREFIX/include" \
+            LDFLAGS="-L$PREFIX/lib -static" \
+            PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
+          make -j$(nproc)
+          $HOST-strip src/aria2c.exe
+
+      - name: Package
+        run: |
+          mkdir -p release
+          cp aria2-src/src/aria2c.exe release/aria2c-windows-${{ matrix.arch }}.exe
+          cd release
+          zip aria2c-windows-${{ matrix.arch }}.zip aria2c-windows-${{ matrix.arch }}.exe
+          sha256sum aria2c-windows-${{ matrix.arch }}.zip > aria2c-windows-${{ matrix.arch }}.zip.sha256
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-${{ matrix.arch }}-build
+          path: release/*
+
+  release:
+    needs: [check-version, build-linux, build-windows]
+    if: needs.check-version.outputs.should_build == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la artifacts/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.check-version.outputs.aria2_version }}-patched
+          name: aria2 ${{ needs.check-version.outputs.aria2_version }} (Patched)
+          body: |
+            ## Patched aria2 Build
+            
+            This is an automatically built version of [aria2 ${{ needs.check-version.outputs.aria2_version }}](https://github.com/aria2/aria2/releases/tag/${{ needs.check-version.outputs.aria2_tag }}) with custom patches applied.
+            
+            ### Applied Patches
+            - `--continue` (`-c`): Default changed to `true`
+            - `--max-concurrent-downloads` (`-j`): Default changed to `128`
+            - `--max-connection-per-server` (`-x`): Default changed to `64`, max limit removed
+            - `--min-split-size` (`-k`): Default changed to `1M`
+            - `--connect-timeout`: Default changed to `30` seconds
+            - `--piece-length`: Minimum changed to `1K`
+            - `--retry-wait`: Default changed to `2` seconds
+            - `--split` (`-s`): Default changed to `128`
+            - `--check-certificate`: Default changed to `false`
+            
+            ### Downloads
+            | Platform | Architecture | File |
+            |----------|--------------|------|
+            | Linux | x86_64 | `aria2c-linux-x86_64.tar.gz` |
+            | Linux | arm64 | `aria2c-linux-arm64.tar.gz` |
+            | Windows | x86_64 | `aria2c-windows-x86_64.zip` |
+            | Windows | i686 | `aria2c-windows-i686.zip` |
+            
+            ### Checksums
+            SHA256 checksums are provided in `.sha256` files.
+            
+            ---
+            *Built automatically from aria2/aria2@${{ needs.check-version.outputs.aria2_tag }}*
+          files: artifacts/*
+          draft: false
+          prerelease: false
+
