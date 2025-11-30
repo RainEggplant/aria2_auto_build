@@ -247,8 +247,12 @@ jobs:
           tar xzf openssl.tar.gz
           cd openssl-*
           if [ "${{ matrix.use_llvm }}" = "true" ]; then
-            # For ARM64 with llvm-mingw, use clang
-            CC=$HOST-clang CXX=$HOST-clang++ ./Configure mingw-arm64 --prefix=$PREFIX --libdir=lib no-shared
+            # For ARM64 with llvm-mingw: use mingw64 target with clang compiler and no-asm
+            # The aarch64-w64-mingw32-clang compiler will target ARM64 Windows
+            CC=$HOST-clang \
+            AR=$HOST-ar \
+            RANLIB=$HOST-ranlib \
+            ./Configure mingw64 --prefix=$PREFIX --libdir=lib no-shared no-asm
           else
             ./Configure ${{ matrix.openssl_target }} --cross-compile-prefix=$HOST- --prefix=$PREFIX --libdir=lib no-shared
           fi
