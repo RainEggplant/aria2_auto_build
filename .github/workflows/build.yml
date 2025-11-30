@@ -95,6 +95,7 @@ jobs:
             libgpg-error-dev \
             libgmp-dev \
             libexpat1-dev \
+            liblzma-dev \
             gettext
 
       - name: Download aria2 source
@@ -124,7 +125,7 @@ jobs:
             --with-libsqlite3 \
             --with-libgcrypt \
             --with-libexpat \
-            ARIA2_STATIC=yes
+            --disable-shared
           make -j$(nproc)
           strip src/aria2c
 
@@ -243,8 +244,9 @@ jobs:
           tar xzf libssh2.tar.gz
           cd libssh2-*
           ./configure --host=$HOST --prefix=$PREFIX --enable-static --disable-shared \
+            --disable-examples-build \
             --with-crypto=openssl --with-libssl-prefix=$PREFIX \
-            CPPFLAGS="-I$PREFIX/include" LDFLAGS="-L$PREFIX/lib"
+            CPPFLAGS="-I$PREFIX/include" LDFLAGS="-L$PREFIX/lib -lws2_32 -lcrypt32 -lgdi32"
           make -j$(nproc)
           make install
 
