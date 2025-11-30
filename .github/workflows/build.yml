@@ -233,7 +233,7 @@ jobs:
           else
             TARGET="mingw"
           fi
-          ./Configure $TARGET --cross-compile-prefix=$HOST- --prefix=$PREFIX no-shared
+          ./Configure $TARGET --cross-compile-prefix=$HOST- --prefix=$PREFIX --libdir=lib no-shared
           make -j$(nproc)
           make install_sw
 
