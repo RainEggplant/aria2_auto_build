@@ -39,7 +39,6 @@ Pre-built binaries are available in the [Releases](../../releases) section.
 - **macOS arm64 (Apple Silicon)**: `aria2c-macos-arm64.tar.gz`
 - **macOS x86_64 (Intel)**: `aria2c-macos-x86_64.tar.gz`
 - **Windows x86_64**: `aria2c-windows-x86_64.zip`
-- **Windows arm64**: `aria2c-windows-arm64.zip`
 - **Windows i686 (32-bit)**: `aria2c-windows-i686.zip`
 
 ## Manual Trigger
