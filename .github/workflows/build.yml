@@ -250,8 +250,11 @@ jobs:
             # For ARM64 with llvm-mingw: use mingw64 target with clang compiler and no-asm
             # The aarch64-w64-mingw32-clang compiler will target ARM64 Windows
             CC=$HOST-clang \
+            CXX=$HOST-clang++ \
             AR=$HOST-ar \
             RANLIB=$HOST-ranlib \
+            RC=$HOST-windres \
+            WINDRES=$HOST-windres \
             ./Configure mingw64 --prefix=$PREFIX --libdir=lib no-shared no-asm
           else
             ./Configure ${{ matrix.openssl_target }} --cross-compile-prefix=$HOST- --prefix=$PREFIX --libdir=lib no-shared
