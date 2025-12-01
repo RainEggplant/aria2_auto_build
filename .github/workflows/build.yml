@@ -256,6 +256,8 @@ jobs:
             RC=$HOST-windres \
             WINDRES=$HOST-windres \
             ./Configure mingw64 --prefix=$PREFIX --libdir=lib no-shared no-asm
+            # Fix windres target architecture from x64 to ARM64
+            sed -i 's/--target=pe-x86-64/--target=pe-aarch64/g' Makefile
           else
             ./Configure ${{ matrix.openssl_target }} --cross-compile-prefix=$HOST- --prefix=$PREFIX --libdir=lib no-shared
           fi
@@ -346,7 +348,7 @@ jobs:
         env:
           HOMEBREW_NO_AUTO_UPDATE: 1
           HOMEBREW_NO_INSTALL_UPGRADE: 1
-          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+          # HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
         run: |
           brew install \
             autoconf \
