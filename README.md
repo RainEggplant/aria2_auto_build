@@ -26,7 +26,6 @@ The following default values are modified from upstream aria2:
 | `--piece-length` | min: `1M` | min: `1K` | Minimum piece length reduced |
 | `--retry-wait` | `0` | `2` | Seconds to wait between retries |
 | `--split` (`-s`) | `5` | `128` | Number of connections for downloading |
-| `--check-certificate` | `true` | `false` | Skip SSL certificate verification |
 
 ## Downloads
 

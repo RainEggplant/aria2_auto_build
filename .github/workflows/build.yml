@@ -544,7 +544,6 @@ jobs:
             - `--piece-length`: Minimum changed to `1K`
             - `--retry-wait`: Default changed to `2` seconds
             - `--split` (`-s`): Default changed to `128`
-            - `--check-certificate`: Default changed to `false`
             
             ### Downloads
             | Platform | Architecture | File |
