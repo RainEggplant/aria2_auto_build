@@ -137,10 +137,11 @@ jobs:
       - name: Build OpenSSL
         run: |
           cd $BUILD_DIR
-          curl -L https://github.com/openssl/openssl/releases/download/openssl-3.3.2/openssl-3.3.2.tar.gz -o openssl.tar.gz
+          # Use OpenSSL 1.1.x to avoid OpenSSL 3.x provider issues with static builds
+          curl -L https://github.com/openssl/openssl/releases/download/OpenSSL_1_1_1w/openssl-1.1.1w.tar.gz -o openssl.tar.gz
           tar xzf openssl.tar.gz
           cd openssl-*
-          ./Configure linux-$(uname -m) --prefix=$PREFIX --libdir=lib no-shared no-legacy
+          ./Configure linux-$(uname -m) --prefix=$PREFIX --libdir=lib no-shared
           make -j$(nproc)
           make install_sw
 
@@ -216,10 +217,8 @@ jobs:
         include:
           - arch: x86_64
             host: x86_64-w64-mingw32
-            openssl_target: mingw64
           - arch: i686
             host: i686-w64-mingw32
-            openssl_target: mingw
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -237,43 +236,54 @@ jobs:
             pkg-config \
             gettext \
             mingw-w64 \
-            g++-mingw-w64
+            g++-mingw-w64 \
+            lzip
 
       - name: Set up build environment
         run: |
           mkdir -p $HOME/aria2-build
           echo "BUILD_DIR=$HOME/aria2-build" >> $GITHUB_ENV
           echo "HOST=${{ matrix.host }}" >> $GITHUB_ENV
-          echo "PREFIX=$HOME/aria2-build/${{ matrix.host }}" >> $GITHUB_ENV
+          echo "PREFIX=/usr/local/${{ matrix.host }}" >> $GITHUB_ENV
+
+      - name: Build GMP
+        run: |
+          sudo mkdir -p $PREFIX
+          sudo chown -R $USER $PREFIX
+          cd $BUILD_DIR
+          curl -L -O https://ftp.gnu.org/gnu/gmp/gmp-6.2.1.tar.lz
+          tar xf gmp-6.2.1.tar.lz
+          cd gmp-6.2.1
+          ./configure \
+            --disable-shared \
+            --enable-static \
+            --prefix=$PREFIX \
+            --host=$HOST \
+            --disable-cxx \
+            --enable-fat \
+            CFLAGS="-mtune=generic -O2 -g0"
+          make -j$(nproc)
+          make install
 
       - name: Build zlib
         run: |
-          mkdir -p $PREFIX
           cd $BUILD_DIR
           curl -L https://zlib.net/zlib-1.3.1.tar.gz -o zlib.tar.gz
           tar xzf zlib.tar.gz
           cd zlib-*
-          CC=$HOST-gcc AR=$HOST-ar RANLIB=$HOST-ranlib ./configure --prefix=$PREFIX --static
+          CC=$HOST-gcc AR=$HOST-ar LD=$HOST-ld RANLIB=$HOST-ranlib STRIP=$HOST-strip \
+            ./configure --prefix=$PREFIX --libdir=$PREFIX/lib --includedir=$PREFIX/include --static
           make -j$(nproc)
           make install
 
       - name: Build expat
         run: |
           cd $BUILD_DIR
-          curl -L https://github.com/libexpat/libexpat/releases/download/R_2_6_2/expat-2.6.2.tar.gz -o expat.tar.gz
-          tar xzf expat.tar.gz
+          curl -L https://github.com/libexpat/libexpat/releases/download/R_2_5_0/expat-2.5.0.tar.bz2 -o expat.tar.bz2
+          tar xjf expat.tar.bz2
           cd expat-*
-          ./configure --host=$HOST --prefix=$PREFIX --enable-static --disable-shared --without-docbook
-          make -j$(nproc)
-          make install
-
-      - name: Build c-ares
-        run: |
-          cd $BUILD_DIR
-          curl -L https://github.com/c-ares/c-ares/releases/download/v1.34.4/c-ares-1.34.4.tar.gz -o c-ares.tar.gz
-          tar xzf c-ares.tar.gz
-          cd c-ares-*
-          ./configure --host=$HOST --prefix=$PREFIX --enable-static --disable-shared
+          ./configure --host=$HOST --prefix=$PREFIX --enable-static --disable-shared \
+            --build=$(dpkg-architecture -qDEB_BUILD_GNU_TYPE)
           make -j$(nproc)
           make install
 
@@ -283,30 +293,43 @@ jobs:
           curl -L https://www.sqlite.org/2024/sqlite-autoconf-3460100.tar.gz -o sqlite.tar.gz
           tar xzf sqlite.tar.gz
           cd sqlite-*
-          ./configure --host=$HOST --prefix=$PREFIX --enable-static --disable-shared
+          ./configure --host=$HOST --prefix=$PREFIX --enable-static --disable-shared \
+            --build=$(dpkg-architecture -qDEB_BUILD_GNU_TYPE)
           make -j$(nproc)
           make install
 
-      - name: Build OpenSSL
+      - name: Build c-ares
         run: |
           cd $BUILD_DIR
-          curl -L https://github.com/openssl/openssl/releases/download/openssl-3.3.2/openssl-3.3.2.tar.gz -o openssl.tar.gz
-          tar xzf openssl.tar.gz
-          cd openssl-*
-          ./Configure ${{ matrix.openssl_target }} --cross-compile-prefix=$HOST- --prefix=$PREFIX --libdir=lib no-shared no-legacy
+          curl -L https://github.com/c-ares/c-ares/releases/download/v1.33.1/c-ares-1.33.1.tar.gz -o c-ares.tar.gz
+          tar xzf c-ares.tar.gz
+          cd c-ares-*
+          ./configure \
+            --disable-shared \
+            --enable-static \
+            --without-random \
+            --prefix=$PREFIX \
+            --host=$HOST \
+            --build=$(dpkg-architecture -qDEB_BUILD_GNU_TYPE) \
+            LIBS="-lws2_32"
           make -j$(nproc)
-          make install_sw
+          make install
 
       - name: Build libssh2
         run: |
           cd $BUILD_DIR
-          curl -L https://libssh2.org/download/libssh2-1.11.1.tar.gz -o libssh2.tar.gz
+          curl -L https://www.libssh2.org/download/libssh2-1.10.0.tar.gz -o libssh2.tar.gz
           tar xzf libssh2.tar.gz
           cd libssh2-*
-          ./configure --host=$HOST --prefix=$PREFIX --enable-static --disable-shared \
-            --disable-examples-build \
-            --with-crypto=openssl --with-libssl-prefix=$PREFIX \
-            CPPFLAGS="-I$PREFIX/include" LDFLAGS="-L$PREFIX/lib -lws2_32 -lcrypt32 -lgdi32"
+          ./configure \
+            --disable-shared \
+            --enable-static \
+            --prefix=$PREFIX \
+            --host=$HOST \
+            --build=$(dpkg-architecture -qDEB_BUILD_GNU_TYPE) \
+            --without-openssl \
+            --with-wincng \
+            LIBS="-lws2_32"
           make -j$(nproc)
           make install
 
@@ -333,17 +356,17 @@ jobs:
             --without-libxml2 \
             --with-libexpat \
             --without-libgcrypt \
-            --with-openssl \
+            --without-openssl \
             --with-libcares \
             --with-libz \
             --with-libssh2 \
             --with-sqlite3 \
             --without-gnutls \
-            --without-wintls \
+            --with-wintls \
             --disable-nls \
             ARIA2_STATIC=yes \
             CPPFLAGS="-I$PREFIX/include" \
-            LDFLAGS="-L$PREFIX/lib -static" \
+            LDFLAGS="-L$PREFIX/lib" \
             PKG_CONFIG_PATH="$PREFIX/lib/pkgconfig"
           make -j$(nproc)
           $HOST-strip src/aria2c.exe
